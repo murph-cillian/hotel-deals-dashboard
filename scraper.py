@@ -55,16 +55,14 @@ def parse_prices(text: str):
     return currency, min(values)    
 
 
-def parse_expiry(text):
-    match = re.search(r"Valid until:\s*(.+)", text, re.IGNORECASE)
-    if not match:
+def parse_expiry(text: str):
+    if not text:
         return None
 
+    text = text.strip()
+
     try:
-        return datetime.strptime(
-            match.group(1).strip(),
-            "%B %d, %Y"
-        ).date()
+        return datetime.strptime(text, "%B %d, %Y").date()
     except ValueError:
         return None
 
