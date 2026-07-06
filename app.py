@@ -14,7 +14,7 @@ Run with:
 import re
 import streamlit as st
 
-from scraper import sync_database, LOCATIONS
+from scraper import sync_database
 from queries import get_deal_cards, get_known_counties, get_known_provinces, get_known_travel_origins
 from filters import filter_deals, sort_deals, SORT_OPTIONS
 
@@ -54,8 +54,6 @@ def show_deal(deal):
     if deal.rating is not None:
         st.markdown(f"⭐ {deal.rating:.1f} ({deal.review_count or 0} reviews, {deal.review_source or 'n/a'})")
     if deal.travel_minutes is not None:
-        st.markdown(f"🚗 {deal.travel_minutes} min away")
-    if deal.min_price is not None:
         st.markdown(f"💶 from {deal.currency or ''}{deal.min_price:.0f}")
     if deal.offer_url:
         st.link_button("View deal ↗", deal.offer_url)
@@ -70,7 +68,7 @@ travel_origin = None if travel_origin == "(none)" else travel_origin
 
 if st.sidebar.button("🔄 Scrape live now"):
     with st.spinner("Scraping Rory's Travel Club..."):
-        sync_database(LOCATIONS)
+        sync_database()
         get_deal_cards.clear()  # Clear cache to reload fresh data
 
     st.sidebar.success("Deals refreshed")

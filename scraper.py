@@ -1,6 +1,7 @@
 # Packages
 import re
 import requests
+from urllib.parse import urlsplit, urlunsplit, urljoin
 from bs4 import BeautifulSoup
 from datetime import datetime, UTC
 
@@ -10,8 +11,11 @@ from models import Hotel, Deal, PriceHistory
 
 # Configuration
 
-URL_BASE = "https://rorystravelclub.com/pages/rtc-"
- 
+TRACKING_URL = (
+    "https://rorystravelclub.acemlna.com/lt.php"
+    "?x=3DZy~GDLJFmb6KCuytA7geJxAK-njdDxkMdgYKPGV6SZ6XF_0Uy.0OFr237ziN~0kfYxbHHJKXib"
+)
+
 HEADERS = {
     # A normal browser UA avoids some basic bot-blocking
     "User-Agent": (
@@ -23,17 +27,11 @@ HEADERS = {
 CARD_CLASS_RE = re.compile(r"-offers-card-[a-zA-Z0-9]+$")
 
 COUNTY_TO_PROVINCE = {
-    "carlow": "Leinster", "dublin": "Leinster", "kildare": "Leinster", "kilkenny": "Leinster",
-    "laois": "Leinster", "longford": "Leinster", "louth": "Leinster", "meath": "Leinster",
-    "offaly": "Leinster", "westmeath": "Leinster", "wexford": "Leinster", "wicklow": "Leinster",
-    "clare": "Munster", "cork": "Munster", "kerry": "Munster", "limerick": "Munster",
-    "tipperary": "Munster", "waterford": "Munster",
-    "galway": "Connacht", "leitrim": "Connacht", "mayo": "Connacht", "roscommon": "Connacht",
-    "sligo": "Connacht",
-    "cavan": "Ulster", "donegal": "Ulster", "monaghan": "Ulster",
+    "carlow": "Leinster", "dublin" : "Leinster", "kildare": "Leinster", "kilkenny" : "Leinster", "laois"    : "Leinster", "longford" : "Leinster", "louth": "Leinster", "meath"  : "Leinster", "offaly"  : "Leinster", "westmeath": "Leinster", "wexford": "Leinster", "wicklow": "Leinster",
+    "clare" : "Munster" , "cork"   : "Munster" , "kerry"  : "Munster" , "limerick" : "Munster" , "tipperary": "Munster" , "waterford": "Munster" ,
+    "galway": "Connacht", "leitrim": "Connacht", "mayo"   : "Connacht", "roscommon": "Connacht", "sligo"    : "Connacht",
+    "antrim": "Ulster"  , "armagh" : "Ulster"  , "down"   : "Ulster"  , "fermanagh": "Ulster"  , "derry"    : "Ulster"  , "tyrone"   : "Ulster"  , "cavan": "Ulster"  , "donegal": "Ulster"  , "monaghan": "Ulster"  ,
 }
-
-LOCATIONS = ['leinster-offers', 'munster-offers', 'connacht-offers', 'ulster-offers-1']
 
 # Scraping Functions
 
@@ -66,10 +64,9 @@ def parse_expiry(text: str):
     except ValueError:
         return None
 
-def scrape_location(location: str) -> list[dict]:
-    """Scrape a single province page (e.g. 'leinster-offers') and return a list of deal dicts."""
+def scrape_url(url: str) -> list[dict]:
+    """Scrape a single URL and return a list of deal dicts."""
 
-    url = URL_BASE + location
     html = fetch_html(url)
     soup = BeautifulSoup(html, "html.parser")
  
@@ -111,18 +108,42 @@ def scrape_location(location: str) -> list[dict]:
 
     return records
 
-def sync_database(locations: list[str] = LOCATIONS):
+def sync_database():
     """Scrape every province page in `locations` and update the SQLAlchemy database."""
+
+    # Follow the redirect to the real page
+    response = requests.get(TRACKING_URL)
+    response.raise_for_status()
+
+    # Parse the HTML
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # Find all <a> tags with class="icon-wrap"
+    links = soup.find_all("a", class_="icon-wrap")
+
+    urls = []
+
+    for link in links:
+        href = link.get("href")
+        if href:
+            
+            full_url = urljoin(response.url, href)
+            urls.append(full_url)
 
     with SessionLocal() as session:
         try:
 
             records = []
-            for location in locations:
-                records.extend(scrape_location(location))
+            for url in urls:
+                records.extend(scrape_url(url))
         
             for record in records:
-                province = COUNTY_TO_PROVINCE.get(record["county"].lower(), "Unknown")
+                county = record.get("county")
+
+                if isinstance(county, str):
+                    province = COUNTY_TO_PROVINCE.get(county.strip().lower(), "Unknown")
+                else:
+                    province = "Unknown"
 
                 # try and retrieve the hotel from the database; if it doesn't exist, create it
                 hotel = (
