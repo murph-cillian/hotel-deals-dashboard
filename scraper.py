@@ -1,8 +1,12 @@
-
+# Packages
 import re
 import requests
-import pandas as pd
 from bs4 import BeautifulSoup
+from datetime import datetime, UTC
+
+# Custom modules
+from database import SessionLocal
+from models import Hotel, Deal, PriceHistory
 
 # Configuration
 
@@ -51,15 +55,17 @@ def parse_prices(text: str):
     return currency, min(values)    
 
 
-def parse_expiry(text: str):
-    """'Valid until: August 31, 2026' -> Timestamp, or None if unparsable."""
-
+def parse_expiry(text):
     match = re.search(r"Valid until:\s*(.+)", text, re.IGNORECASE)
     if not match:
         return None
+
     try:
-        return pd.to_datetime(match.group(1).strip(), errors="coerce")
-    except Exception:
+        return datetime.strptime(
+            match.group(1).strip(),
+            "%B %d, %Y"
+        ).date()
+    except ValueError:
         return None
 
 def scrape_location(location: str) -> list[dict]:
@@ -107,30 +113,84 @@ def scrape_location(location: str) -> list[dict]:
 
     return records
 
-def scrape_all(locations: list[str] = LOCATIONS) -> pd.DataFrame:
-    """Scrape every province page in `locations` and return one combined DataFrame."""
+def sync_database(locations: list[str] = LOCATIONS):
+    """Scrape every province page in `locations` and update the SQLAlchemy database."""
 
-    records = []
-    for location in locations:
-        records.extend(scrape_location(location))
- 
-    df = pd.DataFrame(records)
-    if df.empty:
-        return df
- 
-    # Enrich with derived columns the dashboard uses
-    df["province"] = df["county"].str.lower().map(COUNTY_TO_PROVINCE).fillna("Unknown")
+    with SessionLocal() as session:
+        try:
 
-    df[["currency", "min_price"]] = df["description"].fillna("").apply(lambda t: pd.Series(parse_prices(t)))
+            records = []
+            for location in locations:
+                records.extend(scrape_location(location))
+        
+            for record in records:
+                province = COUNTY_TO_PROVINCE.get(record["county"].lower(), "Unknown")
 
-    df["expiry_date"] = df["expiry"].apply(parse_expiry)
+                # try and retrieve the hotel from the database; if it doesn't exist, create it
+                hotel = (
+                    session.query(Hotel)
+                    .filter_by(name=record["hotel"])
+                    .first()
+                )
 
-    return df
- 
-if __name__ == "__main__":
-    
-    # Quick manual run: `python scraper.py` scrapes everything and saves a CSV.
-    df = scrape_all()
-    df.to_csv("deals.csv", index=False)
-    print(f"Saved {len(df)} deals to deals.csv")
+                if hotel is None:
+                    hotel = Hotel(
+                        name=record["hotel"],
+                    )
+
+                    session.add(hotel)
+                    session.flush()      # Gives hotel.id
+                
+                hotel.county = record["county"]
+                hotel.province = province
+                hotel.image_url = record["image_url"]
+
+                currency, price = parse_prices(record["description"])
+                expiry = parse_expiry(record["expiry"])
+
+                existing_deal = (
+                    session.query(Deal)
+                    .filter_by(
+                        hotel_id=hotel.id,
+                        offer_url=record["offer_url"]
+                    )
+                    .first()
+                )
+
+                if existing_deal:
+                    existing_deal.description = record["description"]
+                    existing_deal.price = price
+                    existing_deal.currency = currency
+                    existing_deal.expiry = expiry
+                    existing_deal.offer_url = record["offer_url"]
+                    existing_deal.scraped_at = datetime.now(UTC)
+               
+                else:
+
+                    existing_deal = Deal(
+                        hotel_id=hotel.id,
+                        description=record["description"],
+                        price=price,
+                        currency=currency,
+                        expiry=expiry,
+                        offer_url=record["offer_url"],
+                        scraped_at=datetime.now(UTC)
+                    )
+
+                    session.add(existing_deal)
+
+                session.add(
+                    PriceHistory(
+                        deal_id=existing_deal.id,
+                        price=price,
+                        scraped_at=datetime.now(UTC),
+                    )
+                )
+
+            session.commit()
+        
+        except Exception:
+            session.rollback()
+            raise
+
  

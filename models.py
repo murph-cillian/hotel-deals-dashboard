@@ -58,6 +58,21 @@ class Deal(Base):
     hotel = relationship("Hotel", back_populates="deals")
 
 
+class PriceHistory(Base):
+
+    __tablename__ = "price_history"
+
+    id = Column(Integer, primary_key=True)
+
+    deal_id = Column(Integer, ForeignKey("deals.id"))
+
+    price = Column(Float)
+
+    currency = Column(String)
+
+    scraped_at = Column(DateTime)
+
+
 class Review(Base):
 
     __tablename__ = "reviews"
@@ -92,14 +107,3 @@ class TravelTime(Base):
     last_updated = Column(DateTime)
 
 
-class PriceHistory(Base):
-
-    __tablename__ = "price_history"
-
-    id = Column(Integer, primary_key=True)
-
-    deal_id = Column(Integer, ForeignKey("deals.id"))
-
-    price = Column(Float)
-
-    scraped_at = Column(DateTime)
